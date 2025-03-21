@@ -3,6 +3,9 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, Image, KeyboardAvo
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { auth } from '../../firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import Toast from 'react-native-toast-message';
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -12,18 +15,46 @@ export default function ForgotPassword() {
 
   const handleResetPassword = async () => {
     if (!email) {
-      alert('Please enter your email address');
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Please enter your email address',
+        position: 'top',
+        visibilityTime: 3000,
+        autoHide: true,
+      });
       return;
     }
-    
+
     setIsLoading(true);
-    // Implement your password reset logic here
     try {
-      // Mock password reset process
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Send a password reset email using Firebase
+      await sendPasswordResetEmail(auth, email);
       setResetSent(true);
-    } catch (error) {
-      alert('Password reset failed. Please try again.');
+      Toast.show({
+        type: 'success',
+        text1: 'Email Sent!',
+        text2: `A password reset link has been sent.`,
+        position: 'top',
+        visibilityTime: 3000,
+        autoHide: true,
+      });
+    } catch (error: any) {
+      let message = error.message || 'Password reset failed. Please try again.';
+      if (error.code === 'auth/invalid-email') {
+        message = 'Invalid email address.';
+      } else if (error.code === 'auth/user-not-found') {
+        message = 'User not found.';
+      }
+      Toast.show({
+        type: 'error',
+        text1: 'Reset Password Error',
+        text2: message,
+        position: 'top',
+        visibilityTime: 3000,
+        autoHide: true,
+      });
+      console.error('Reset password error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -35,15 +66,9 @@ export default function ForgotPassword() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scrollContainer}>
-          <TouchableOpacity 
-            onPress={() => router.back()} 
-            style={styles.backButton}
-          >
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
 
@@ -88,10 +113,7 @@ export default function ForgotPassword() {
                 )}
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.backToLoginButton}
-                onPress={handleBackToLogin}
-              >
+              <TouchableOpacity style={styles.backToLoginButton} onPress={handleBackToLogin}>
                 <Text style={styles.backToLoginText}>Back to Login</Text>
               </TouchableOpacity>
             </View>
@@ -100,26 +122,24 @@ export default function ForgotPassword() {
               <View style={styles.successIconContainer}>
                 <Ionicons name="checkmark-circle" size={80} color="#6A7BFF" />
               </View>
-              
+
               <Text style={styles.successTitle}>Email Sent!</Text>
-              
+
               <Text style={styles.successText}>
                 We've sent a password reset link to {email}. Please check your inbox and follow the instructions.
+                Now, whether you actually *receive* it... that depends on whether you have an account with that email.
               </Text>
-              
-              <TouchableOpacity
-                style={styles.resetButton}
-                onPress={handleBackToLogin}
-              >
+
+              <TouchableOpacity style={styles.resetButton} onPress={handleBackToLogin}>
                 <Text style={styles.resetButtonText}>Back to Login</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.resendContainer}>
+
+              <View style={styles.resendContainer}>
                 <Text style={styles.resendText}>Didn't receive the email? </Text>
                 <TouchableOpacity onPress={handleResetPassword}>
                   <Text style={styles.resendLink}>Resend</Text>
                 </TouchableOpacity>
-              </TouchableOpacity>
+              </View>
             </View>
           )}
         </ScrollView>
