@@ -3,6 +3,9 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, Image, KeyboardAvo
 import { Link, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { auth } from '../../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import Toast from 'react-native-toast-message';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -13,18 +16,45 @@ export default function Login() {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      alert('Please fill in all fields');
+      Toast.show({
+        type: 'error',
+        text1: 'Login Error',
+        text2: 'Please fill in all fields.',
+        position: 'top',
+        visibilityTime: 3000,
+        autoHide: true,
+      });
       return;
     }
     
     setIsLoading(true);
-    // Implement your login logic here
+    
     try {
-      // Mock login process
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      router.replace('/');
-    } catch (error) {
-      alert('Login failed. Please try again.');
+      // Sign in with email and password using Firebase
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('User logged in:', userCredential.user);
+      
+      // Redirect to the dashboard on successful login
+      router.replace('/(dashboard)');
+    } catch (error: any) {
+      // Show error with a toast message instead of alerting an error screen
+      let message = error.message || 'Login failed. Please try again.';
+      if (error.code === 'auth/invalid-email') {
+        message = 'Invalid email address.';
+      } else if (error.code === 'auth/user-not-found') {
+        message = 'User not found.';
+      } else if (error.code === 'auth/wrong-password') {
+        message = 'Incorrect password.';
+      }
+      Toast.show({
+        type: 'error',
+        text1: 'Login Error',
+        text2: message,
+        position: 'top',
+        visibilityTime: 3000,
+        autoHide: true,
+      });
+      console.error('Login error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -32,10 +62,7 @@ export default function Login() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scrollContainer}>
           <View style={styles.headerContainer}>
             <Image
@@ -74,15 +101,8 @@ export default function Login() {
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
               />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-                style={styles.eyeIcon}
-              >
-                <Ionicons
-                  name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                  size={20}
-                  color="#666"
-                />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
+                <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#666" />
               </TouchableOpacity>
             </View>
 
@@ -238,22 +258,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_500Medium',
     color: '#666',
     paddingHorizontal: 16,
-  },
-  socialButtons: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: 30,
-  },
-  socialButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f7f7f7',
-    marginHorizontal: 10,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
   },
   signupContainer: {
     flexDirection: 'row',
