@@ -3,6 +3,9 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, Image, KeyboardAvo
 import { Link, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { auth } from '../../firebase';
+import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
+import Toast from 'react-native-toast-message';
 
 export default function Signup() {
   const [name, setName] = useState('');
@@ -12,27 +15,63 @@ export default function Signup() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const router = useRouter();
 
   const handleSignup = async () => {
+    setError('');
+    
     if (!name || !email || !password || !confirmPassword) {
-      alert('Please fill in all fields');
+      setError('Please fill in all fields');
       return;
     }
 
     if (password !== confirmPassword) {
-      alert('Passwords do not match');
+      setError('Passwords do not match');
+      return;
+    }
+    
+    if (password.length < 6) {
+      setError('Password should be at least 6 characters');
       return;
     }
     
     setIsLoading(true);
-    // Implement your signup logic here
+    
     try {
-      // Mock signup process
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      router.replace('/');
-    } catch (error) {
-      alert('Signup failed. Please try again.');
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      await updateProfile(userCredential.user, { displayName: name });
+      
+      await sendEmailVerification(userCredential.user);
+      
+      // console.log('User account created & signed in!', userCredential.user);
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Email Sent!',
+        text2: 'Please check your email for verification.',
+        position: 'top',
+        visibilityTime: 4000,
+        autoHide: true,
+      });
+      
+      
+      setTimeout(() => {
+        router.replace('/');
+      }, 4000);
+      
+    } catch (error: any) {
+      if (error.code === 'auth/email-already-in-use') {
+        setError('That email address is already in use!');
+      } else if (error.code === 'auth/invalid-email') {
+        setError('That email address is invalid!');
+      } else if (error.code === 'auth/weak-password') {
+        setError('The password is too weak!');
+      } else {
+        setError(error.message || 'An unknown error occurred');
+      }
+      console.error('Signup error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -61,6 +100,12 @@ export default function Signup() {
             <Text style={styles.title}>Image to Plate</Text>
             <Text style={styles.subtitle}>Create your account to get started</Text>
           </View>
+
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.formContainer}>
             <View style={styles.inputContainer}>
@@ -177,6 +222,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  errorContainer: {
+    backgroundColor: '#FFE8E8',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FF9999',
+  },
+  errorText: {
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 14,
+    color: '#D8000C',
+    textAlign: 'center',
   },
   scrollContainer: {
     flexGrow: 1,
