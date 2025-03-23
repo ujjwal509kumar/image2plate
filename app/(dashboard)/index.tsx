@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -9,7 +9,9 @@ import {
   Alert, 
   TextInput, 
   ActivityIndicator,
-  Platform
+  Platform,
+  ImageSourcePropType,
+  LayoutChangeEvent
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../../firebase';
@@ -20,20 +22,40 @@ import * as ImagePicker from 'expo-image-picker';
 // Import your Frontpage component (adjust path as needed)
 import Frontpage from '../(frontpage)/index';
 
+// Type definitions
+interface DetectionBBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+interface Detection {
+  class: string;
+  confidence: number;
+  bbox: DetectionBBox;
+}
+
+interface RenderedImageSize {
+  width: number;
+  height: number;
+}
+
 export default function Dashboard() {
-  const [displayName, setDisplayName] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(true);
+  const [displayName, setDisplayName] = useState<string>('');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [backendIP, setBackendIP] = useState('');
-  const [detections, setDetections] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [backendIP, setBackendIP] = useState<string>('');
+  const [detections, setDetections] = useState<Detection[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // For scaling bounding boxes over the image.
-  const [originalWidth, setOriginalWidth] = useState(0);
-  const [originalHeight, setOriginalHeight] = useState(0);
-  const [renderedWidth, setRenderedWidth] = useState(0);
+  // For scaling bounding boxes over the image
+  const [originalWidth, setOriginalWidth] = useState<number>(0);
+  const [originalHeight, setOriginalHeight] = useState<number>(0);
+  const [renderedImageSize, setRenderedImageSize] = useState<RenderedImageSize>({ width: 0, height: 0 });
+  const imageRef = useRef<Image | null>(null);
 
-  // Check authentication state on mount.
+  // Check authentication state on mount
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) {
@@ -62,7 +84,7 @@ export default function Dashboard() {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: 'images', // Use string literal 'image'
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 1,
     });
@@ -72,6 +94,7 @@ export default function Dashboard() {
       console.log('Image captured:', uri);
       setImageUri(uri);
       setDetections([]); // Clear previous detections
+      
       // Get original dimensions of the captured image
       Image.getSize(uri, (width, height) => {
         setOriginalWidth(width);
@@ -100,7 +123,7 @@ export default function Dashboard() {
       uri: imageUri,
       name: 'image.jpg',
       type: 'image/jpeg',
-    } as any);
+    } as any); // Use type assertion for FormData item
 
     try {
       console.log(`Sending image to backend at http://${backendIP}:8000/detect ...`);
@@ -109,6 +132,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' },
         body: formData,
       });
+      
       console.log('Response received from backend.');
       const data = await response.json();
       if (response.ok) {
@@ -126,35 +150,74 @@ export default function Dashboard() {
     }
   };
 
-  // If the user is not logged in, render the Frontpage.
+  // If the user is not logged in, render the Frontpage
   if (!isLoggedIn) {
     return <Frontpage />;
   }
 
-  // If detections exist, show the processed view with bounding boxes.
+  // Function to accurately measure image dimensions on screen
+  const onImageLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setRenderedImageSize({ width, height });
+    console.log(`Rendered image dimensions: ${width}x${height}`);
+  };
+
+  // Render bounding boxes with improved accuracy
   const renderDetectionsOverlay = () => {
-    if (!renderedWidth || !originalWidth) return null;
-    // Calculate scale factor from original image width to rendered width.
-    const scale = renderedWidth / originalWidth;
+    if (!renderedImageSize.width || !originalWidth || !originalHeight) return null;
+    
+    // Calculate scale factors for width and height
+    const scaleWidth = renderedImageSize.width / originalWidth;
+    const scaleHeight = renderedImageSize.height / originalHeight;
+    
     return detections.map((det, index) => {
-      // det.bbox: { x1, y1, x2, y2 }
       const { x1, y1, x2, y2 } = det.bbox;
-      const left = x1 * scale;
-      const top = y1 * scale;
-      const width = (x2 - x1) * scale;
-      const height = (y2 - y1) * scale;
+      
+      // Calculate scaled coordinates
+      const left = x1 * scaleWidth;
+      const top = y1 * scaleHeight;
+      const width = (x2 - x1) * scaleWidth;
+      const height = (y2 - y1) * scaleHeight;
+      
+      // Format confidence score for display
+      const confidencePercent = Math.round(det.confidence * 100);
+      
       return (
         <View 
           key={index}
           style={[
             styles.bbox, 
-            { left, top, width, height }
+            { 
+              left, 
+              top, 
+              width, 
+              height,
+              borderColor: getBoundingBoxColor(index)
+            }
           ]}
         >
-          <Text style={styles.bboxText}>{det.class} ({det.confidence})</Text>
+          <Text style={[styles.bboxText, { backgroundColor: getBoundingBoxColor(index, 0.3) }]}>
+            {det.class} ({confidencePercent}%)
+          </Text>
         </View>
       );
     });
+  };
+
+  // Generate different colors for different detection boxes
+  const getBoundingBoxColor = (index: number, opacity: number = 0.2): string => {
+    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF', '#FFFF00', '#00FFFF'];
+    const baseColor = colors[index % colors.length];
+    
+    if (opacity < 1) {
+      // Return rgba color with specified opacity
+      const r = parseInt(baseColor.slice(1, 3), 16);
+      const g = parseInt(baseColor.slice(3, 5), 16);
+      const b = parseInt(baseColor.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+    
+    return baseColor;
   };
 
   return (
@@ -162,74 +225,103 @@ export default function Dashboard() {
       <ScrollView contentContainerStyle={styles.contentContainer}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Dashboard</Text>
-          <TouchableOpacity style={styles.logoutIconContainer} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={28} color="#fff" />
+          <Text style={styles.headerTitle}>Object Detector</Text>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={24} color="#fff" />
+            <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
         
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
           <Text style={styles.welcomeText}>Welcome,</Text>
-          <Text style={styles.userName}>{displayName}!</Text>
+          <Text style={styles.userName}>{displayName}</Text>
         </View>
 
         {/* Backend IP Input */}
-        <TextInput
-          style={styles.input}
-          placeholder="Enter Backend IP Address"
-          value={backendIP}
-          onChangeText={setBackendIP}
-          keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric'}
-        />
+        <View style={styles.inputContainer}>
+          <Ionicons name="server-outline" size={24} color="#6A7BFF" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Enter Backend IP Address"
+            value={backendIP}
+            onChangeText={setBackendIP}
+            keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric'}
+          />
+        </View>
 
         {/* Capture Image Button */}
         <TouchableOpacity style={styles.card} onPress={pickImage}>
-          <Ionicons name="camera-outline" size={32} color="#6A7BFF" />
-          <Text style={styles.cardText}>Capture & Detect Object</Text>
+          <View style={styles.cardContent}>
+            <View style={styles.iconCircle}>
+              <Ionicons name="camera-outline" size={32} color="#fff" />
+            </View>
+            <Text style={styles.cardText}>Capture Image</Text>
+          </View>
         </TouchableOpacity>
 
-        {/* If no detections, show raw captured image and process button */}
-        {imageUri && detections.length === 0 && (
+        {/* Display captured image */}
+        {imageUri && (
           <View style={styles.imagePreviewContainer}>
-            <View 
-              style={styles.imageContainer}
-              onLayout={(e) => {
-                setRenderedWidth(e.nativeEvent.layout.width);
-              }}
-            >
-              <Image source={{ uri: imageUri }} style={styles.imagePreview} />
+            <View style={styles.imageContainer}>
+              <Image 
+                ref={imageRef}
+                source={{ uri: imageUri }} 
+                style={styles.imagePreview} 
+                onLayout={onImageLayout}
+                resizeMode="contain"
+              />
+              {detections.length > 0 && renderDetectionsOverlay()}
             </View>
-            <TouchableOpacity style={styles.processButton} onPress={sendToBackend} disabled={loading}>
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.processButtonText}>Send to Backend</Text>
-              )}
-            </TouchableOpacity>
+            
+            {detections.length === 0 ? (
+              <TouchableOpacity 
+                style={styles.processButton} 
+                onPress={sendToBackend} 
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="search-outline" size={24} color="#fff" />
+                    <Text style={styles.processButtonText}>Detect Objects</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={styles.resetButton} 
+                onPress={pickImage}
+              >
+                <Ionicons name="refresh-outline" size={24} color="#fff" />
+                <Text style={styles.resetButtonText}>Capture New Image</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
-        {/* If detections exist, show the processed image with bounding boxes */}
-        {imageUri && detections.length > 0 && (
-          <View style={styles.processedImageContainer}>
-            <View 
-              style={styles.imageContainer}
-              onLayout={(e) => {
-                setRenderedWidth(e.nativeEvent.layout.width);
-              }}
-            >
-              <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-              {renderDetectionsOverlay()}
-            </View>
-            <View style={styles.detectionsList}>
-              <Text style={styles.resultsTitle}>Detected Objects:</Text>
-              {detections.map((det, index) => (
-                <Text key={index} style={styles.resultItem}>
-                  {det.class} (Confidence: {det.confidence})
-                </Text>
-              ))}
-            </View>
+        {/* Detection Results */}
+        {detections.length > 0 && (
+          <View style={styles.detectionsList}>
+            <Text style={styles.resultsTitle}>Detected Objects:</Text>
+            {detections.map((det, index) => {
+              const confidencePercent = Math.round(det.confidence * 100);
+              return (
+                <View key={index} style={styles.resultItemContainer}>
+                  <View 
+                    style={[
+                      styles.colorIndicator, 
+                      { backgroundColor: getBoundingBoxColor(index) }
+                    ]} 
+                  />
+                  <Text style={styles.resultItem}>
+                    <Text style={styles.resultItemClass}>{det.class}</Text>
+                    <Text style={styles.resultItemConfidence}> - {confidencePercent}% confidence</Text>
+                  </Text>
+                </View>
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -238,74 +330,227 @@ export default function Dashboard() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#e9edf3' },
-  contentContainer: { padding: 20 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f5f8ff' 
+  },
+  contentContainer: { 
+    padding: 20,
+    paddingBottom: 40
+  },
   header: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'center', 
-    marginBottom: 30, 
-    backgroundColor: '#fff', 
-    padding: 15, 
+    marginBottom: 20, 
+    backgroundColor: '#6A7BFF', 
+    padding: 16, 
     borderRadius: 16, 
-    shadowColor: '#000', 
-    shadowOpacity: 0.1, 
-    shadowOffset: { width: 0, height: 3 }, 
+    shadowColor: '#6A7BFF', 
+    shadowOpacity: 0.3, 
+    shadowOffset: { width: 0, height: 4 }, 
     shadowRadius: 8, 
-    elevation: 3,
+    elevation: 5,
   },
-  headerTitle: { fontSize: 24, fontWeight: '800', color: '#333' },
-  logoutIconContainer: { backgroundColor: '#ff4d4d', padding: 10, borderRadius: 10 },
-  welcomeSection: { marginBottom: 20, alignItems: 'center' },
-  welcomeText: { fontSize: 20, color: '#555' },
-  userName: { fontSize: 28, fontWeight: '800', color: '#6A7BFF', marginTop: 8 },
-  input: { 
+  headerTitle: { 
+    fontSize: 22, 
+    fontWeight: '800', 
+    color: '#fff' 
+  },
+  logoutButton: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)', 
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10 
+  },
+  logoutText: {
+    color: '#fff',
+    fontWeight: '600',
+    marginLeft: 4
+  },
+  welcomeSection: { 
+    marginBottom: 24, 
+  },
+  welcomeText: { 
+    fontSize: 18, 
+    color: '#555' 
+  },
+  userName: { 
+    fontSize: 28, 
+    fontWeight: '800', 
+    color: '#333', 
+    marginTop: 4 
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff', 
-    padding: 14, 
-    borderRadius: 10, 
+    borderRadius: 12,
     marginBottom: 20,
-    fontSize: 16,
+    paddingHorizontal: 16,
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 4,
     elevation: 2,
   },
+  inputIcon: {
+    marginRight: 10
+  },
+  input: { 
+    flex: 1,
+    paddingVertical: 14, 
+    fontSize: 16,
+  },
   card: { 
     backgroundColor: '#fff', 
-    paddingVertical: 24, 
-    paddingHorizontal: 16, 
     borderRadius: 16, 
+    shadowColor: '#6A7BFF', 
+    shadowOpacity: 0.12, 
+    shadowOffset: { width: 0, height: 4 }, 
+    shadowRadius: 10, 
+    elevation: 4, 
+    marginBottom: 24,
+    overflow: 'hidden'
+  },
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+  },
+  iconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#6A7BFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16
+  },
+  cardText: { 
+    fontSize: 18, 
+    fontWeight: '600', 
+    color: '#333', 
+  },
+  imagePreviewContainer: { 
     alignItems: 'center', 
+    marginBottom: 24,
+    width: '100%'
+  },
+  imageContainer: { 
+    width: '100%', 
+    position: 'relative',
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  imagePreview: { 
+    width: '100%', 
+    height: 300, 
+  },
+  processButton: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6A7BFF', 
+    paddingVertical: 14, 
+    paddingHorizontal: 24, 
+    borderRadius: 12, 
+    marginTop: 16,
+    shadowColor: '#6A7BFF',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  processButtonText: { 
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  resetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4cd964',
+    paddingVertical: 14, 
+    paddingHorizontal: 24, 
+    borderRadius: 12, 
+    marginTop: 16,
+    shadowColor: '#4cd964',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  resetButtonText: {
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  detectionsList: { 
+    backgroundColor: '#fff', 
+    padding: 20, 
+    borderRadius: 16, 
+    width: '100%', 
     shadowColor: '#000', 
     shadowOpacity: 0.1, 
-    shadowOffset: { width: 0, height: 3 }, 
+    shadowOffset: { width: 0, height: 2 }, 
     shadowRadius: 8, 
-    elevation: 3, 
-    marginBottom: 20,
+    elevation: 3 
   },
-  cardText: { fontSize: 18, fontWeight: '600', color: '#333', marginTop: 12 },
-  imagePreviewContainer: { alignItems: 'center', marginBottom: 20 },
-  processedImageContainer: { alignItems: 'center', marginBottom: 20 },
-  imageContainer: { width: '100%', position: 'relative' },
-  imagePreview: { width: '100%', height: 250, borderRadius: 12 },
-  processButton: { backgroundColor: '#6A7BFF', paddingVertical: 14, paddingHorizontal: 20, borderRadius: 12, marginTop: 10 },
-  processButtonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  detectionsList: { marginTop: 20, backgroundColor: '#fff', padding: 16, borderRadius: 12, width: '100%', shadowColor: '#000', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 2 }, shadowRadius: 6, elevation: 2 },
-  resultsTitle: { fontSize: 20, fontWeight: '700', marginBottom: 10 },
-  resultItem: { fontSize: 16, color: '#333', marginVertical: 4 },
+  resultsTitle: { 
+    fontSize: 20, 
+    fontWeight: '700', 
+    marginBottom: 12,
+    color: '#333'
+  },
+  resultItemContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 6,
+  },
+  colorIndicator: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    marginRight: 10
+  },
+  resultItem: { 
+    fontSize: 16, 
+    flex: 1
+  },
+  resultItemClass: {
+    fontWeight: '600',
+    color: '#333'
+  },
+  resultItemConfidence: {
+    color: '#666'
+  },
   // Styles for bounding boxes overlay
   bbox: {
     position: 'absolute',
-    borderWidth: 2,
+    borderWidth: 3,
     borderColor: '#FF0000',
-    backgroundColor: 'rgba(255, 0, 0, 0.1)',
+    backgroundColor: 'transparent',
   },
   bboxText: {
-    color: '#FF0000',
+    color: '#fff',
     fontWeight: 'bold',
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    fontSize: 12,
-    paddingHorizontal: 4,
+    backgroundColor: 'rgba(255,0,0,0.7)',
+    fontSize: 14,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    position: 'absolute',
+    top: -25,
+    left: 0,
+    borderRadius: 4
   },
 });
