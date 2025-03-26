@@ -78,6 +78,7 @@ export default function Dashboard() {
   const pickImage = async (fromCamera: boolean = true) => {
     let result;
     if (fromCamera) {
+      // Request camera permissions using the updated API
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Camera access is required to take pictures.');
@@ -89,6 +90,7 @@ export default function Dashboard() {
         quality: 1,
       });
     } else {
+      // Request media library permissions using the updated API
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Gallery access is required to pick images.');
