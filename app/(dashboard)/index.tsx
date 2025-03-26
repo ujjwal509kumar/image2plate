@@ -10,7 +10,6 @@ import {
   TextInput, 
   ActivityIndicator,
   Platform,
-  ImageSourcePropType,
   LayoutChangeEvent
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,7 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 // Import your Frontpage component (adjust path as needed)
 import Frontpage from '../(frontpage)/index';
 
-// Type definitions
+// Type definitions for TypeScript
 interface DetectionBBox {
   x1: number;
   y1: number;
@@ -53,7 +52,6 @@ export default function Dashboard() {
   const [originalWidth, setOriginalWidth] = useState<number>(0);
   const [originalHeight, setOriginalHeight] = useState<number>(0);
   const [renderedImageSize, setRenderedImageSize] = useState<RenderedImageSize>({ width: 0, height: 0 });
-  const imageRef = useRef<Image | null>(null);
 
   // Check authentication state on mount
   useEffect(() => {
@@ -76,30 +74,42 @@ export default function Dashboard() {
     }
   };
 
-  const pickImage = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Camera access is required to take pictures.');
-      return;
+  // Pick image from camera or gallery
+  const pickImage = async (fromCamera: boolean = true) => {
+    let result;
+    if (fromCamera) {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera access is required to take pictures.');
+        return;
+      }
+      result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 1,
+      });
+    } else {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery access is required to pick images.');
+        return;
+      }
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 1,
+      });
     }
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 1,
-    });
 
     if (!result.canceled) {
       const uri = result.assets[0].uri;
-      console.log('Image captured:', uri);
       setImageUri(uri);
       setDetections([]); // Clear previous detections
       
-      // Get original dimensions of the captured image
+      // Get original dimensions of the captured/picked image
       Image.getSize(uri, (width, height) => {
         setOriginalWidth(width);
         setOriginalHeight(height);
-        console.log(`Original dimensions: ${width}x${height}`);
       }, (error) => {
         console.error('Error getting image size:', error);
       });
@@ -112,34 +122,29 @@ export default function Dashboard() {
       return;
     }
     if (!imageUri) {
-      Alert.alert('No Image', 'Please capture an image first.');
+      Alert.alert('No Image', 'Please capture or upload an image first.');
       return;
     }
 
     setLoading(true);
-    console.log('Preparing image for upload...');
     const formData = new FormData();
     formData.append('file', {
       uri: imageUri,
       name: 'image.jpg',
       type: 'image/jpeg',
-    } as any); // Use type assertion for FormData item
+    } as any);
 
     try {
-      console.log(`Sending image to backend at http://${backendIP}:8000/detect ...`);
       const response = await fetch(`http://${backendIP}:8000/detect`, {
         method: 'POST',
         headers: { 'Content-Type': 'multipart/form-data' },
         body: formData,
       });
       
-      console.log('Response received from backend.');
       const data = await response.json();
       if (response.ok) {
-        console.log('Detection results:', data.detections);
         setDetections(data.detections);
       } else {
-        console.error('Backend error:', data.error);
         Alert.alert('Error', data.error || 'Failed to process image.');
       }
     } catch (error) {
@@ -155,31 +160,27 @@ export default function Dashboard() {
     return <Frontpage />;
   }
 
-  // Function to accurately measure image dimensions on screen
+  // Measure image layout for accurate bounding box rendering
   const onImageLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setRenderedImageSize({ width, height });
-    console.log(`Rendered image dimensions: ${width}x${height}`);
   };
 
-  // Render bounding boxes with improved accuracy
+  // Advanced bounding box rendering with color-coded detection
   const renderDetectionsOverlay = () => {
     if (!renderedImageSize.width || !originalWidth || !originalHeight) return null;
     
-    // Calculate scale factors for width and height
     const scaleWidth = renderedImageSize.width / originalWidth;
     const scaleHeight = renderedImageSize.height / originalHeight;
     
     return detections.map((det, index) => {
       const { x1, y1, x2, y2 } = det.bbox;
       
-      // Calculate scaled coordinates
       const left = x1 * scaleWidth;
       const top = y1 * scaleHeight;
       const width = (x2 - x1) * scaleWidth;
       const height = (y2 - y1) * scaleHeight;
       
-      // Format confidence score for display
       const confidencePercent = Math.round(det.confidence * 100);
       
       return (
@@ -204,13 +205,12 @@ export default function Dashboard() {
     });
   };
 
-  // Generate different colors for different detection boxes
+  // Color generation for different detection types
   const getBoundingBoxColor = (index: number, opacity: number = 0.2): string => {
     const colors = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF', '#FFFF00', '#00FFFF'];
     const baseColor = colors[index % colors.length];
     
     if (opacity < 1) {
-      // Return rgba color with specified opacity
       const r = parseInt(baseColor.slice(1, 3), 16);
       const g = parseInt(baseColor.slice(3, 5), 16);
       const b = parseInt(baseColor.slice(5, 7), 16);
@@ -223,7 +223,7 @@ export default function Dashboard() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.contentContainer}>
-        {/* Header */}
+        {/* Header Section */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Object Detector</Text>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -250,22 +250,23 @@ export default function Dashboard() {
           />
         </View>
 
-        {/* Capture Image Button */}
-        <TouchableOpacity style={styles.card} onPress={pickImage}>
-          <View style={styles.cardContent}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="camera-outline" size={32} color="#fff" />
-            </View>
-            <Text style={styles.cardText}>Capture Image</Text>
-          </View>
-        </TouchableOpacity>
+        {/* Image Selection Options */}
+        <View style={styles.imageSelectionContainer}>
+          <TouchableOpacity style={styles.imageSelectionButton} onPress={() => pickImage(true)}>
+            <Ionicons name="camera-outline" size={24} color="#fff" />
+            <Text style={styles.imageSelectionText}>Take Photo</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageSelectionButton} onPress={() => pickImage(false)}>
+            <Ionicons name="image-outline" size={24} color="#fff" />
+            <Text style={styles.imageSelectionText}>Upload Image</Text>
+          </TouchableOpacity>
+        </View>
 
-        {/* Display captured image */}
+        {/* Image Preview and Detection */}
         {imageUri && (
           <View style={styles.imagePreviewContainer}>
             <View style={styles.imageContainer}>
               <Image 
-                ref={imageRef}
                 source={{ uri: imageUri }} 
                 style={styles.imagePreview} 
                 onLayout={onImageLayout}
@@ -292,16 +293,16 @@ export default function Dashboard() {
             ) : (
               <TouchableOpacity 
                 style={styles.resetButton} 
-                onPress={pickImage}
+                onPress={() => setImageUri(null)}
               >
                 <Ionicons name="refresh-outline" size={24} color="#fff" />
-                <Text style={styles.resetButtonText}>Capture New Image</Text>
+                <Text style={styles.resetButtonText}>Clear Image</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
-        {/* Detection Results */}
+        {/* Detection Results List */}
         {detections.length > 0 && (
           <View style={styles.detectionsList}>
             <Text style={styles.resultsTitle}>Detected Objects:</Text>
@@ -552,5 +553,25 @@ const styles = StyleSheet.create({
     top: -25,
     left: 0,
     borderRadius: 4
+  },
+  imageSelectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  imageSelectionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6A7BFF',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    width: '48%',
+    justifyContent: 'center',
+  },
+  imageSelectionText: {
+    color: '#fff',
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });
